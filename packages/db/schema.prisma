@@ -1,0 +1,118 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole { CUSTOMER SELLER ADMIN }
+enum SellerStatus { PENDING_APPROVAL APPROVED REJECTED SUSPENDED }
+enum ProductStatus { ACTIVE INACTIVE DRAFT }
+enum OfferCondition { NEW USED }
+enum OrderStatus { PENDING ACCEPTED PREPARING READY_FOR_PICKUP OUT_FOR_DELIVERY DELIVERED CANCELLED REJECTED }
+enum DeliveryType { SELLER_DELIVERY PICKUP }
+
+model User {
+  id              String          @id @default(cuid())
+  email           String          @unique
+  passwordHash    String
+  firstName       String
+  lastName        String
+  phone           String?
+  role            UserRole        @default(CUSTOMER)
+  status          String          @default("ACTIVE")
+  sellerProfile   SellerProfile?
+  addresses       UserAddress[]
+  vehicles        UserVehicle[]
+  carts           Cart[]
+  orders          Order[]
+  favorites       Favorite[]
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+}
+
+model UserAddress {
+  id         String   @id @default(cuid())
+  userId     String
+  label      String
+  address    String
+  city       String
+  postalCode String?
+  phone      String?
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  @@index([userId])
+}
+
+model SellerProfile {
+  id                    String       @id @default(cuid())
+  userId                String       @unique
+  businessName          String
+  companyRegistrationNo String
+  taxNumber             String?
+  status                SellerStatus @default(PENDING_APPROVAL)
+  user                  User         @relation(fields: [userId], references: [id])
+  stores                Store[]
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+}
+
+model Store {
+  id             String          @id @default(cuid())
+  sellerId       String
+  name           String
+  slug           String          @unique
+  logo           String?
+  description    String?
+  phone          String?
+  email          String?
+  address        String
+  city           String
+  latitude       Decimal?        @db.Decimal(9, 6)
+  longitude      Decimal?        @db.Decimal(9, 6)
+  rating         Decimal         @default(0) @db.Decimal(3, 2)
+  reviewCount    Int             @default(0)
+  deliveryActive Boolean         @default(true)
+  pickupActive   Boolean         @default(true)
+  seller         SellerProfile   @relation(fields: [sellerId], references: [id])
+  offers         SellerOffer[]
+  sellerOrders   SellerOrder[]
+  workingHours  StoreWorkingHour[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  @@index([city, sellerId])
+}
+
+model StoreWorkingHour {
+  id       String @id @default(cuid())
+  storeId  String
+  weekday  Int
+  opensAt  String
+  closesAt String
+  store    Store  @relation(fields: [storeId], references: [id], onDelete: Cascade)
+  @@unique([storeId, weekday])
+}
+
+model VehicleMake { id String @id @default(cuid()); name String @unique; models VehicleModel[] }
+model VehicleModel { id String @id @default(cuid()); makeId String; name String; make VehicleMake @relation(fields: [makeId], references: [id], onDelete: Cascade); generations VehicleGeneration[]; @@unique([makeId, name]) }
+model VehicleGeneration { id String @id @default(cuid()); modelId String; name String; fromYear Int?; toYear Int?; model VehicleModel @relation(fields: [modelId], references: [id], onDelete: Cascade); variants VehicleVariant[]; @@index([modelId]) }
+model VehicleVariant { id String @id @default(cuid()); generationId String; name String; year Int; engine String; fuel String; powerHp Int?; generation VehicleGeneration @relation(fields: [generationId], references: [id], onDelete: Cascade); userVehicles UserVehicle[]; compatibility ProductCompatibility[]; @@index([generationId, year]) }
+model UserVehicle { id String @id @default(cuid()); userId String; variantId String; nickname String?; isActive Boolean @default(false); user User @relation(fields: [userId], references: [id], onDelete: Cascade); variant VehicleVariant @relation(fields: [variantId], references: [id]); @@index([userId, isActive]) }
+
+model Category { id String @id @default(cuid()); name String; slug String @unique; parentId String?; parent Category? @relation("CategoryTree", fields: [parentId], references: [id]); children Category[] @relation("CategoryTree"); products MasterProduct[]; active Boolean @default(true) }
+model Brand { id String @id @default(cuid()); name String @unique; slug String @unique; logo String?; products MasterProduct[]; active Boolean @default(true) }
+model MasterProduct { id String @id @default(cuid()); brandId String; categoryId String; name String; slug String @unique; manufacturerPartNumber String; ean String?; description String?; specifications Json?; status ProductStatus @default(DRAFT); brand Brand @relation(fields: [brandId], references: [id]); category Category @relation(fields: [categoryId], references: [id]); images ProductImage[]; oems ProductOEM[]; compatibility ProductCompatibility[]; offers SellerOffer[]; favorites Favorite[]; createdAt DateTime @default(now()); updatedAt DateTime @updatedAt; @@index([manufacturerPartNumber]); @@index([ean]); @@index([brandId, categoryId]) }
+model ProductImage { id String @id @default(cuid()); productId String; url String; sortOrder Int @default(0); product MasterProduct @relation(fields: [productId], references: [id], onDelete: Cascade) }
+model ProductOEM { id String @id @default(cuid()); productId String; manufacturer String; oemNumber String; normalizedOEM String; product MasterProduct @relation(fields: [productId], references: [id], onDelete: Cascade); @@unique([manufacturer, normalizedOEM]); @@index([normalizedOEM]) }
+model ProductCompatibility { id String @id @default(cuid()); productId String; variantId String; source String; product MasterProduct @relation(fields: [productId], references: [id], onDelete: Cascade); variant VehicleVariant @relation(fields: [variantId], references: [id]); @@unique([productId, variantId]); @@index([variantId]) }
+model SellerOffer { id String @id @default(cuid()); storeId String; productId String; sellerSku String; price Decimal @db.Decimal(12, 2); oldPrice Decimal? @db.Decimal(12, 2); stock Int @default(0); condition OfferCondition @default(NEW); active Boolean @default(true); deliveryAvailable Boolean @default(true); pickupAvailable Boolean @default(true); preparationMinutes Int @default(60); store Store @relation(fields: [storeId], references: [id]); product MasterProduct @relation(fields: [productId], references: [id]); inventory Inventory?; orderItems OrderItem[]; createdAt DateTime @default(now()); updatedAt DateTime @updatedAt; @@unique([storeId, productId]); @@unique([storeId, sellerSku]); @@index([productId, active, price]); @@index([storeId, stock]) }
+model Inventory { id String @id @default(cuid()); offerId String @unique; quantity Int @default(0); lowStockAt Int @default(2); offer SellerOffer @relation(fields: [offerId], references: [id], onDelete: Cascade); updatedAt DateTime @updatedAt }
+
+model Cart { id String @id @default(cuid()); userId String?; sessionId String? @unique; user User? @relation(fields: [userId], references: [id]); items CartItem[]; updatedAt DateTime @updatedAt; @@index([userId]) }
+model CartItem { id String @id @default(cuid()); cartId String; offerId String; quantity Int @default(1); cart Cart @relation(fields: [cartId], references: [id], onDelete: Cascade); offer SellerOffer @relation(fields: [offerId], references: [id]); @@unique([cartId, offerId]) }
+model Order { id String @id @default(cuid()); userId String; total Decimal @db.Decimal(12, 2); status OrderStatus @default(PENDING); deliveryAddress String; city String; phone String; notes String?; user User @relation(fields: [userId], references: [id]); sellerOrders SellerOrder[]; createdAt DateTime @default(now()); updatedAt DateTime @updatedAt }
+model SellerOrder { id String @id @default(cuid()); orderId String; storeId String; subtotal Decimal @db.Decimal(12, 2); deliveryFee Decimal @db.Decimal(12, 2); total Decimal @db.Decimal(12, 2); status OrderStatus @default(PENDING); deliveryType DeliveryType; order Order @relation(fields: [orderId], references: [id], onDelete: Cascade); store Store @relation(fields: [storeId], references: [id]); items OrderItem[]; createdAt DateTime @default(now()); updatedAt DateTime @updatedAt; @@index([storeId, status]) }
+model OrderItem { id String @id @default(cuid()); sellerOrderId String; offerId String; productNameSnapshot String; skuSnapshot String; quantity Int; unitPrice Decimal @db.Decimal(12, 2); total Decimal @db.Decimal(12, 2); sellerOrder SellerOrder @relation(fields: [sellerOrderId], references: [id], onDelete: Cascade); offer SellerOffer @relation(fields: [offerId], references: [id]) }
+model Favorite { id String @id @default(cuid()); userId String; productId String; user User @relation(fields: [userId], references: [id], onDelete: Cascade); product MasterProduct @relation(fields: [productId], references: [id], onDelete: Cascade); @@unique([userId, productId]) }
